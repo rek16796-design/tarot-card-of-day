@@ -196,12 +196,25 @@ def queue_status(item):
     return read_json(STATE_FILE, {}).get("sent", {}).get(item_key(item))
 
 
+def access_report(token, channel):
+    me = api(token, "getMe")
+    chat = api(token, "getChat", {"chat_id": channel})
+    member = api(token, "getChatMember", {"chat_id": channel, "user_id": me["id"]})
+    ok = member.get("status") == "administrator" and member.get("can_post_messages", False)
+    return (f"Бот: @{me['username']}\nКанал: {chat.get('title')}\n"
+            f"Права на публикацию: {'есть' if ok else 'НЕТ — добавьте бота админом с правом публиковать'}")
+
+
 # ---------- основной цикл ----------
 
 def run(token, channel):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     log(f"Бот запущен. Карта дня каждый день в {POST_TIME[0]:02d}:{POST_TIME[1]:02d} МСК. "
         f"Канал: {channel}. Данные: {DATA_DIR}")
+    try:
+        log(access_report(token, channel).replace("\n", " | "))
+    except Exception as e:
+        log(f"Проверка доступа не удалась: {e}")
     while True:
         now = datetime.now(MSK)
         try:
@@ -235,12 +248,7 @@ def main():
         return
     token, channel = load_env()
     if cmd == "check":
-        me = api(token, "getMe")
-        chat = api(token, "getChat", {"chat_id": channel})
-        member = api(token, "getChatMember", {"chat_id": channel, "user_id": me["id"]})
-        ok = member.get("status") == "administrator" and member.get("can_post_messages", False)
-        print(f"Бот: @{me['username']}\nКанал: {chat.get('title')}\n"
-              f"Права на публикацию: {'есть' if ok else 'НЕТ — добавьте бота админом с правом публиковать'}")
+        print(access_report(token, channel))
     elif cmd == "card-now":
         post_card(token, channel)
     elif cmd == "run":
