@@ -108,13 +108,14 @@ def api(token, method, fields=None, file_field=None, file_path=None):
     return data["result"]
 
 
-def send_post(token, channel, text, image=None):
+def send_post(token, channel, text, image=None, parse_mode=None):
+    extra = {"parse_mode": parse_mode} if parse_mode else {}
     if image and len(text) <= 1024:
-        return api(token, "sendPhoto", {"chat_id": channel, "caption": text}, "photo", image)
+        return api(token, "sendPhoto", {"chat_id": channel, "caption": text, **extra}, "photo", image)
     if image:  # подпись к фото ограничена 1024 знаками: фото отдельно, текст следом
         api(token, "sendPhoto", {"chat_id": channel}, "photo", image)
     return api(token, "sendMessage", {"chat_id": channel, "text": text,
-                                       "disable_web_page_preview": "true"})
+                                       "disable_web_page_preview": "true", **extra})
 
 
 # ---------- карта дня ----------
@@ -165,8 +166,13 @@ def parse_at(s):
     return datetime.strptime(s, "%Y-%m-%d %H:%M").replace(tzinfo=MSK)
 
 
+def item_title(item):
+    """Первая строка поста; для {"card": true} — «Карта дня»."""
+    return "Карта дня" if item.get("card") else item["text"].splitlines()[0]
+
+
 def item_key(item):
-    return f"{item['at']}|{item['text'].splitlines()[0]}"
+    return f"{item['at']}|{item_title(item)}"
 
 
 def process_queue(token, channel, now):
@@ -180,13 +186,27 @@ def process_queue(token, channel, now):
         if key in sent or parse_at(item["at"]) > now:
             continue
         if now - parse_at(item["at"]) > CATCHUP:
-            log(f"Пропущен (время прошло): {item['at']} {item['text'].splitlines()[0]!r}")
+            log(f"Пропущен (время прошло): {item['at']} {item_title(item)!r}")
             sent[key] = "skipped"
+        elif item.get("card"):  # внеочередная карта дня
+            write_json(STATE_FILE, state)
+            post_card(token, channel, now.date())  # сама читает и пишет state.json
+            state = read_json(STATE_FILE, {})
+            sent = state.setdefault("sent", {})
+            sent[key] = now.strftime("%Y-%m-%d %H:%M")
         else:
             image = BASE / item["image"] if item.get("image") else None
-            send_post(token, channel, item["text"], image)
+            msg = send_post(token, channel, item["text"], image, item.get("parse_mode"))
             sent[key] = now.strftime("%Y-%m-%d %H:%M")
+            write_json(STATE_FILE, state)  # отметка до закрепления, чтобы не отправить повторно
             log(f"Пост из очереди опубликован: {item['text'].splitlines()[0]!r}")
+            if item.get("pin"):
+                try:
+                    api(token, "pinChatMessage", {"chat_id": channel, "message_id": msg["message_id"],
+                                                  "disable_notification": "true"})
+                    log("Пост закреплён")
+                except Exception as e:
+                    log(f"Закрепить не удалось: {e}")
         changed = True
         write_json(STATE_FILE, state)  # сохраняем сразу после каждого поста
     return changed
@@ -241,7 +261,7 @@ def main():
         return
     if cmd == "queue":
         for item in read_json(QUEUE_FILE, []):
-            print(f"{item['at']}  [{queue_status(item) or 'ждёт'}]  {item['text'].splitlines()[0]}")
+            print(f"{item['at']}  [{queue_status(item) or 'ждёт'}]  {item_title(item)}")
         return
     if cmd not in ("check", "card-now", "run"):  # help и всё неизвестное
         print(__doc__)
