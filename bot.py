@@ -5,7 +5,7 @@
   python bot.py check         проверить токен и доступ бота к каналу (ничего не публикует)
   python bot.py card-now      опубликовать карту дня прямо сейчас
   python bot.py queue         показать очередь постов из queue.json
-  python bot.py run           работать постоянно: карта дня в 10:25 МСК и посты из очереди по времени
+  python bot.py [run]         работать постоянно (команда по умолчанию): карта дня в 10:25 МСК и посты из очереди по времени
 
 Токен и канал берутся из файла .env рядом со скриптом (или из переменных окружения):
   BOT_TOKEN=...      токен от @BotFather
@@ -56,7 +56,7 @@ def load_env():
                 if line and not line.startswith("#") and "=" in line:
                     k, v = line.split("=", 1)
                     os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
-    token = os.environ.get("BOT_TOKEN")
+    token = os.environ.get("BOT_TOKEN") or os.environ.get("TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN")
     channel = os.environ.get("CHANNEL") or DEFAULT_CHANNEL
     if not token:
         sys.exit("Нет BOT_TOKEN. Задайте переменную окружения BOT_TOKEN или файл .env по образцу .env.example")
@@ -217,7 +217,7 @@ def run(token, channel):
 
 
 def main():
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "help"
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "run"  # хостинг запускает файл без аргументов
     if cmd == "preview":
         n = int(sys.argv[2]) if len(sys.argv) > 2 else 3
         deck, state = read_json(DECK_FILE, []), read_json(STATE_FILE, {})
@@ -230,7 +230,7 @@ def main():
         for item in read_json(QUEUE_FILE, []):
             print(f"{item['at']}  [{queue_status(item) or 'ждёт'}]  {item['text'].splitlines()[0]}")
         return
-    if cmd not in ("check", "card-now", "run"):
+    if cmd not in ("check", "card-now", "run"):  # help и всё неизвестное
         print(__doc__)
         return
     token, channel = load_env()
