@@ -1,0 +1,8 @@
+.env
+state.json
+*.tmp
+__pycache__/
+data/
+pinned.md
+posts_week.md
+queue_draft.json
