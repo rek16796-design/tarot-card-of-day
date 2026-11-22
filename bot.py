@@ -37,7 +37,7 @@ DEFAULT_CHANNEL = "-1001812594867"  # канал «Магия карт» (id и�
 DECK_FILE = BASE / "deck.json"
 QUEUE_FILE = BASE / "queue.json"
 STATE_FILE = DATA_DIR / "state.json"
-IMAGES_DIR = BASE / "images"  # необязательно: images/<Название карты>.jpg|png
+PREDICTIONS_FILE = BASE / "predictions.json"
 
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
           "августа", "сентября", "октября", "ноября", "декабря"]
@@ -120,44 +120,47 @@ def send_post(token, channel, text, image=None, parse_mode=None):
 
 # ---------- карта дня ----------
 
-def next_card(state, deck, consume=True):
-    """Карты идут в случайном порядке без повторов, пока колода не закончится."""
+def load_pool():
+    """Все тексты для «Карты дня»: 78 из колоды + предсказания из predictions.json.
+    Индексы 0..77 — колода (как раньше), дальше — предсказания."""
+    deck = [c["text"] for c in read_json(DECK_FILE, [])]
+    return deck + read_json(PREDICTIONS_FILE, [])
+
+
+def next_text(state, pool):
+    """Тексты идут в случайном порядке без повторов; когда все вышли — перемешиваются заново."""
     order = state.get("order") or []
+    if state.get("pool_size") != len(pool):
+        # пул вырос: добавляем новые тексты, а уже вышедшие ставим в самый конец
+        old_size = state.get("pool_size") or 78  # до появления predictions.json был только 78-карточный пул
+        used = set(range(old_size)) - set(order) if order else set()
+        fresh = [i for i in range(len(pool)) if i not in used]
+        random.shuffle(fresh)
+        tail = list(used)
+        random.shuffle(tail)
+        order = fresh + tail
+        state["pool_size"] = len(pool)
     if not order:
-        order = list(range(len(deck)))
+        order = list(range(len(pool)))
         random.shuffle(order)
     idx = order[0]
-    if consume:
-        state["order"] = order[1:]
-    else:
-        state["order"] = order
-    return deck[idx]
+    state["order"] = order[1:]
+    return pool[idx]
 
 
-def format_card(card, day):
+def format_card(text, day):
     emoji = EMOJI[day.toordinal() % len(EMOJI)]
-    return (f"Карта дня {emoji} {day.day} {MONTHS[day.month - 1]}\n\n"
-            f"✨ {card['card']} ✨\n\n"
-            f"{card['text']}\n\n{FOOTER}")
-
-
-def card_image(card):
-    for ext in ("jpg", "jpeg", "png"):
-        p = IMAGES_DIR / f"{card['card']}.{ext}"
-        if p.exists():
-            return p
-    return None
+    return f"Карта дня {emoji} {day.day} {MONTHS[day.month - 1]}\n\n{text}\n\n{FOOTER}"
 
 
 def post_card(token, channel, day=None):
     day = day or datetime.now(MSK).date()
-    deck = read_json(DECK_FILE, [])
     state = read_json(STATE_FILE, {})
-    card = next_card(state, deck)
-    send_post(token, channel, format_card(card, day), card_image(card))
+    text = next_text(state, load_pool())
+    send_post(token, channel, format_card(text, day))
     state["last_card_date"] = day.isoformat()
     write_json(STATE_FILE, state)
-    log(f"Карта дня опубликована: {card['card']}")
+    log(f"Карта дня опубликована: {text[:50]!r}…  Осталось до перемешивания: {len(state['order'])}")
 
 
 # ---------- очередь постов ----------
@@ -253,11 +256,11 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "run"  # хостинг запускает файл без аргументов
     if cmd == "preview":
         n = int(sys.argv[2]) if len(sys.argv) > 2 else 3
-        deck, state = read_json(DECK_FILE, []), read_json(STATE_FILE, {})
+        pool, state = load_pool(), read_json(STATE_FILE, {})
         state = json.loads(json.dumps(state))  # копия: превью не трогает state.json
         day = datetime.now(MSK).date()
         for i in range(n):
-            print(format_card(next_card(state, deck), day + timedelta(days=i)), "\n" + "-" * 40)
+            print(format_card(next_text(state, pool), day + timedelta(days=i)), "\n" + "-" * 40)
         return
     if cmd == "queue":
         for item in read_json(QUEUE_FILE, []):
